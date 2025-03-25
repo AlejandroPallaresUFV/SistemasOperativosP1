@@ -1,4 +1,5 @@
-#include <studio.h>
+#include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <sys/ipc.h>
 #include <sys/sem.h>
@@ -9,24 +10,51 @@
 
 #define FILE_NAME "cuentas.txt"
 
-//Funcion para realizar una op sobr eel semaforo
-void operar_semaforo(int semid, int op){
-	struct sembuf operacion;
-	operacion.sem_nun = 0; //Indice semaforo
-	operacion.sem_op = op; // -1 (wait/P), +1 (signal/V)
-	opreracion.sem_flg = 0;
-	semop(semid, &operacion, 1); //aplicar op
-}
-
+struct Cuenta{
+  int numero_cuenta;
+  char titular[50];
+  float saldo;
+  int num_transacciones;
+};
 
 int main (){
 	
+	int count_cuenta = 1001;
+	char op = "Y";
 
-	if (FILE* fp = fopen("cuenta.txt", "r") ){
-			
-	}
+	bool flag = true;
 
+	FILE* fp = fopen("cuentas.txt", "a");
 
-	
+	while (flag = true){
+
+			//Inicializa un struct de tipo cuenta
+
+			struct Cuenta c;
+
+			//El count se inicializa en 1000 
+
+			c.numero_cuenta = count_cuenta;
+			count_cuenta++;
+
+			printf("Escriba el titular:");
+			scanf("%c", &c.titular);
+			printf("Escriba el saldo incial:");
+			scanf("%f", &c.saldo);
+
+			c.num_transacciones = 0;
+
+			//En caso de querer añadir más cuentas, se poen "Y"
+
+			printf("Añadir otra cuenta? Y/N");
+			scanf("%c", &op);
+
+			if(op == "N"){
+				flag = false;
+			}
+		
+		}	
+
+	close(fp);
 
 }
