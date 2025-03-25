@@ -1,0 +1,6 @@
+1001,Mary Doe,5000.00,0
+1002,John Smith,3000.00,0
+1003,Gonsalon Sabalon,8000.00,0
+1004,Pringui deLara,0.50,0
+1005,Galletita Sexy,3500.0,0
+1006,Brawl Brul,0.95,0
