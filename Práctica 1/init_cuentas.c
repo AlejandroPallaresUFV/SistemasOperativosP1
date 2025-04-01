@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <sys/ipc.h>
@@ -18,43 +19,51 @@ struct Cuenta{
 };
 
 int main (){
-	
-	int count_cuenta = 1001;
-	char op = "Y";
 
-	bool flag = true;
+  int count_cuenta = 1001;
+  char op, comp;
 
-	FILE* fp = fopen("cuentas.txt", "a");
+  op = 'Y';
 
-	while (flag = true){
+  comp = 'N';
 
-			//Inicializa un struct de tipo cuenta
+  bool flag = true;
 
-			struct Cuenta c;
+  FILE* fp = fopen("cuentas.txt", "a");
 
-			//El count se inicializa en 1000 
+  while (flag == true){
 
-			c.numero_cuenta = count_cuenta;
-			count_cuenta++;
+    //Inicializa un struct de tipo cuenta
 
-			printf("Escriba el titular:");
-			scanf("%c", &c.titular);
-			printf("Escriba el saldo incial:");
-			scanf("%f", &c.saldo);
+    struct Cuenta c;
 
-			c.num_transacciones = 0;
+    //El count se inicializa en 1000
 
-			//En caso de querer añadir más cuentas, se poen "Y"
+    c.numero_cuenta = count_cuenta;
+    count_cuenta++;
 
-			printf("Añadir otra cuenta? Y/N");
-			scanf("%c", &op);
+    printf("Escriba el titular:");
+    scanf("%50s", c.titular);
+    printf("Escriba el saldo incial:");
+    scanf("%f", &c.saldo);
 
-			if(op == "N"){
-				flag = false;
-			}
-		
-		}	
+    c.num_transacciones = 0;
 
-	close(fp);
+    fprintf(fp, "%d, %s, %f, %d", c.numero_cuenta, c.titular, c.saldo, c.num_transacciones);
+
+
+
+    //En caso de querer añadir más cuentas, se pone "Y"
+
+    printf("Añadir otra cuenta? Y/N");
+    scanf("%c", &op);
+
+    if((strcmp(&op,&comp))==0){
+      flag = false;
+    }
+
+  } 
+
+  fclose(fp);
 
 }
