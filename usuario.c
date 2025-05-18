@@ -7,28 +7,13 @@
 #include <unistd.h>
 #include <sys/ipc.h>
 #include <sys/msg.h>
- 
-// Estructura de cuenta bancaria
-typedef struct {
-    int numero_cuenta;
-    char titular[50];
-    float saldo;
-    int num_transacciones;
-} Cuenta;
+#include "estructuras.h"
 
-// Estructura para comunicación con banco.c
-typedef struct {
-    int numero_cuenta;
-    char tipo[20];
-    float monto;
-} Operacion;
-
-// Globales
 sem_t *semaforo;
 char archivo_cuentas[] = "cuentas.dat";
+char archivo_transacciones[] = "transacciones.log";
 int cuenta_actual;
 
-// Función para buscar una cuenta en el archivo
 long buscar_posicion(FILE *f, Cuenta *cuenta) {
     rewind(f);
     while (fread(cuenta, sizeof(Cuenta), 1, f)) {
@@ -39,16 +24,15 @@ long buscar_posicion(FILE *f, Cuenta *cuenta) {
     return -1;
 }
 
-// Función de hilo para depósito, retiro o transferencia
 void *procesar_operacion(void *arg) {
-    Operacion *op = (Operacion *)arg;
+    DatosOperacion *op = (DatosOperacion *)arg;
     FILE *f = fopen(archivo_cuentas, "rb+");
     if (!f) {
         perror("Error abriendo cuentas.dat");
         return NULL;
     }
 
-    sem_wait(semaforo);  // Bloquear acceso
+    sem_wait(semaforo);
 
     Cuenta cuenta;
     long pos = buscar_posicion(f, &cuenta);
@@ -62,21 +46,33 @@ void *procesar_operacion(void *arg) {
     fseek(f, pos, SEEK_SET);
     fread(&cuenta, sizeof(Cuenta), 1, f);
 
-    if (strcmp(op->tipo, "deposito") == 0) {
+    if (op->tipo_operacion == 1) { // deposito
         cuenta.saldo += op->monto;
-    } else if (strcmp(op->tipo, "retiro") == 0) {
+
+        FILE *t = fopen(archivo_transacciones, "a");
+        fprintf(t,"Cuenta destino: %d | Monto ingresado: %.2f\n", cuenta_actual, op->monto);
+        fclose(t);
+
+    } else if (op->tipo_operacion == 2) { // retiro
         if (cuenta.saldo >= op->monto) {
             cuenta.saldo -= op->monto;
+
+            FILE *t = fopen(archivo_transacciones, "a");
+            fprintf(t,"Cuenta origen: %d | Monto retirado: %.2f\n", cuenta_actual, op->monto);
+            fclose(t);
+
+
         } else {
             printf("Saldo insuficiente.\n");
             sem_post(semaforo);
             fclose(f);
             return NULL;
         }
-    } else if (strcmp(op->tipo, "transferencia") == 0) {
+    } else if (op->tipo_operacion == 3) { // transferencia
         int destino;
         printf("Cuenta destino: ");
         scanf("%d", &destino);
+        op->cuenta_destino = destino;
 
         Cuenta cuenta_dest;
         long pos_dest = -1;
@@ -106,44 +102,41 @@ void *procesar_operacion(void *arg) {
 
             printf("Transferencia realizada correctamente.\n");
 
-            struct msgbuf {
-                long tipo;
-                char texto[100];
-            };
+            FILE *t = fopen(archivo_transacciones, "a");
+            fprintf(t,"Cuenta origen: %d | Cuenta destino: %d | Monto transferido: %.2f\n", cuenta_actual, cuenta_dest.numero_cuenta, op->monto);
+            fclose(t);
 
-            key_t key = ftok("monitor.c", 65);
-            int cola_id = msgget(key, 0666);
-            if (cola_id != -1) {
-                struct msgbuf mensaje;
-                mensaje.tipo = 1;
-                snprintf(mensaje.texto, sizeof(mensaje.texto), "%d,%s,%.2f", op->numero_cuenta, op->tipo, op->monto);
-                
-                msgsnd(cola_id, &mensaje, sizeof(mensaje.texto), 0);
-            }
-
-            Operacion notificacion = { destino, "recibido", op->monto };
-            write(STDOUT_FILENO, &notificacion, sizeof(Operacion));
-
+        } else {
+            printf("Saldo insuficiente para transferencia.\n");
             sem_post(semaforo);
             fclose(f);
             return NULL;
-        } else {
-            printf("Saldo insuficiente para transferencia.\n");
         }
     }
 
-    // Depósito o retiro: actualizar cuenta y notificar
     fseek(f, pos, SEEK_SET);
     fwrite(&cuenta, sizeof(Cuenta), 1, f);
-    write(STDOUT_FILENO, op, sizeof(Operacion));
     printf("Operación realizada con éxito.\n");
+
+    // Envío al monitor (para cualquier operación)
+    key_t key = ftok("monitor.c", 65);
+    int cola_id = msgget(key, 0666);
+    if (cola_id != -1) {
+        struct msgbuf mensaje;
+        mensaje.mtype = 1;
+        snprintf(mensaje.mtext, sizeof(mensaje.mtext), "%d,%s,%.2f,%d",
+                 op->numero_cuenta,
+                 op->tipo_operacion == 1 ? "deposito" : (op->tipo_operacion == 2 ? "retiro" : "transferencia"),
+                 op->monto,
+                 op->cuenta_destino);
+        msgsnd(cola_id, &mensaje, sizeof(mensaje.mtext), 0);
+    }
 
     sem_post(semaforo);
     fclose(f);
     return NULL;
 }
 
-// Consultar saldo
 void consultar_saldo() {
     sem_wait(semaforo);
 
@@ -167,16 +160,14 @@ void consultar_saldo() {
     fclose(f);
     sem_post(semaforo);
 }
-
-// Menú principal
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        printf("Uso: %s <ID_usuario>\n", argv[0]);
+        printf("Uso: %s <numero_cuenta>\n", argv[0]);
         return 1;
     }
 
-    printf("Introduce tu número de cuenta: ");
-    scanf("%d", &cuenta_actual);
+    cuenta_actual = atoi(argv[1]);
+    printf("🧾 Accediendo a la cuenta: %d\n", cuenta_actual);
 
     semaforo = sem_open("/cuentas_sem", 0);
     if (semaforo == SEM_FAILED) {
@@ -186,7 +177,7 @@ int main(int argc, char *argv[]) {
 
     int opcion;
     do {
-        printf("\n--- Menú Usuario ---\n");
+        printf("\n--- Menú Usuario [%d] ---\n", cuenta_actual);
         printf("1. Depósito\n");
         printf("2. Retiro\n");
         printf("3. Transferencia\n");
@@ -196,15 +187,22 @@ int main(int argc, char *argv[]) {
         scanf("%d", &opcion);
 
         if (opcion >= 1 && opcion <= 3) {
-            Operacion op;
+            DatosOperacion op;
             op.numero_cuenta = cuenta_actual;
+            op.write_fd = STDOUT_FILENO;
 
             printf("Monto: ");
             scanf("%f", &op.monto);
 
-            if (opcion == 1) strcpy(op.tipo, "deposito");
-            else if (opcion == 2) strcpy(op.tipo, "retiro");
-            else if (opcion == 3) strcpy(op.tipo, "transferencia");
+            if (opcion == 1) {
+                op.tipo_operacion = 1; // depósito
+            } else if (opcion == 2) {
+                op.tipo_operacion = 2; // retiro
+            } else if (opcion == 3) {
+                op.tipo_operacion = 3; // transferencia
+                printf("Cuenta destino: ");
+                scanf("%d", &op.cuenta_destino);
+            }
 
             pthread_t hilo;
             pthread_create(&hilo, NULL, procesar_operacion, &op);
@@ -216,8 +214,10 @@ int main(int argc, char *argv[]) {
 
     } while (opcion != 5);
 
+
     sem_close(semaforo);
 
+    // Enviar mensaje de FIN al monitor al salir
     key_t key = ftok("monitor.c", 65);
     int cola_id = msgget(key, 0666);
     if (cola_id != -1) {

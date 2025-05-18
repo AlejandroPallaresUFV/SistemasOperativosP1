@@ -9,13 +9,12 @@
 #include <string.h>
 
 #define NOMBRE_SEM "/cuentas_sem"
+#define MAX_USUARIOS 4
 
 int main() {
     int pipe_monitor[2];
-    pid_t pid_monitor, pid_usuario;
+    pid_t pid_monitor;
     sem_t *sem;
-    leer_configuracion();
-
     sem = sem_open(NOMBRE_SEM, O_CREAT, 0644, 1);
     if (sem == SEM_FAILED) {
         perror("sem_open");
@@ -44,17 +43,16 @@ int main() {
         }
     }
 
-    pid_usuario = fork();
-
-    switch (pid_usuario) {
-        case -1:
-            perror("Error al hacer fork para usuario");
+    // Lanzar múltiples usuarios con xterm
+    for (int i = 0; i < MAX_USUARIOS; i++) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            char id_str[10];
+            snprintf(id_str, sizeof(id_str), "%d", 1001 + i);
+            execlp("xterm", "xterm", "-e", "./usuario", id_str, NULL);
+            perror("Error lanzando xterm con usuario");
             exit(1);
-
-        case 0:
-            execl("./usuario", "./usuario", "1001", NULL);
-            perror("Error al lanzar usuario");
-            exit(1);
+        }
     }
 
     close(pipe_monitor[1]);
@@ -69,8 +67,9 @@ int main() {
 
     close(pipe_monitor[0]);
 
-    wait(NULL);
-    wait(NULL);
+    for (int i = 0; i < MAX_USUARIOS + 1; i++) {
+        wait(NULL);
+    }
 
     sem_unlink(NOMBRE_SEM);
 

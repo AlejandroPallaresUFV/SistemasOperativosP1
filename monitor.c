@@ -6,16 +6,40 @@
 #include <sys/msg.h>
 #include <sys/types.h>
 #include <time.h>
+#include "estructuras.h"
 
-float LIMITE_RETIRO = 1000.0;
-float LIMITE_TRANSFERENCIA = 5000.0;
-int UMBRAL_RETIROS = 3;
-int UMBRAL_TRANSFERENCIAS = 5;
+Config leer_configuracion(const char *ruta) {
+    Config config;
+    FILE *f = fopen(ruta, "r");
+    if (!f) {
+        perror("Error abriendo config.txt");
+        exit(1);
+    }
 
-struct msgbuf {
-    long tipo;
-    char texto[100];
-};
+    char linea[256];
+    while (fgets(linea, sizeof(linea), f)) {
+        if (linea[0] == '#' || linea[0] == '\n') continue;
+
+        if (strncmp(linea, "LIMITE_RETIRO=", 14) == 0) {
+            sscanf(linea + 14, "%d", &config.limite_retiro);
+        } else if (strncmp(linea, "LIMITE_TRANSFERENCIA=", 22) == 0) {
+            sscanf(linea + 22, "%d", &config.limite_transferencia);
+        } else if (strncmp(linea, "UMBRAL_RETIROS=", 16) == 0) {
+            sscanf(linea + 16, "%d", &config.umbral_retiros);
+        } else if (strncmp(linea, "UMBRAL_TRANSFERENCIAS=", 24) == 0) {
+            sscanf(linea + 24, "%d", &config.umbral_transferencias);
+        } else if (strncmp(linea, "NUM_HILOS=", 10) == 0) {
+            sscanf(linea + 10, "%d", &config.num_hilos);
+        } else if (strncmp(linea, "ARCHIVO_CUENTAS=", 16) == 0) {
+            sscanf(linea + 16, "%99s", config.archivo_cuentas);
+        } else if (strncmp(linea, "ARCHIVO_LOG=", 12) == 0) {
+            sscanf(linea + 12, "%99s", config.archivo_log);
+        }
+    }
+
+    fclose(f);
+    return config;
+}
 
 typedef struct {
     int cuenta;
@@ -40,33 +64,12 @@ EstadoCuenta *get_estado(int cuenta) {
     return &cuentas[num_cuentas - 1];
 }
 
-void leer_configuracion() {
-    FILE *f = fopen("config.txt", "r");
-    if (!f) {
-        perror("Error abriendo config.txt");
-        return;
-    }
-
-    char linea[100];
-    while (fgets(linea, sizeof(linea), f)) {
-        if (strncmp(linea, "LIMITE_RETIRO=", 14) == 0) {
-            sscanf(linea + 14, "%f", &LIMITE_RETIRO);
-        } else if (strncmp(linea, "LIMITE_TRANSFERENCIA=", 22) == 0) {
-            sscanf(linea + 22, "%f", &LIMITE_TRANSFERENCIA);
-        } else if (strncmp(linea, "UMBRAL_RETIROS=", 16) == 0) {
-            sscanf(linea + 16, "%d", &UMBRAL_RETIROS);
-        } else if (strncmp(linea, "UMBRAL_TRANSFERENCIAS=", 24) == 0) {
-            sscanf(linea + 24, "%d", &UMBRAL_TRANSFERENCIAS);
-        }
-    }
-
-    fclose(f);
-}
-
-
 int main(int argc, char *argv[]) {
 
-   leer_configuracion();
+    char archivo_transacciones[] = "transacciones.log";
+
+    Config cfg = leer_configuracion("config.txt");
+    printf("Configuración cargada. LIMITE_RETIRO = %d\n", cfg.limite_retiro);
 
     if (argc < 2) {
         printf("Uso: %s <fd_alertas>\n", argv[0]);
@@ -82,26 +85,26 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-
     while (1) {
         struct msgbuf mensaje;
-        if (msgrcv(cola_id, &mensaje, sizeof(mensaje.texto), 0, 0) == -1) {
+        if (msgrcv(cola_id, &mensaje, sizeof(mensaje.mtext), 0, 0) == -1) {
             perror("msgrcv");
             continue;
         }
-        if (strcmp(mensaje.texto, "FIN") == 0) {
-        printf("Finalizando\n");
-        break;
-    }
+
+        if (strcmp(mensaje.mtext, "FIN") == 0) {
+            printf("Finalizando\n");
+            break;
+        }
 
         int cuenta;
         char tipo[20], destino[20] = "";
         float monto;
 
-        int campos = sscanf(mensaje.texto, "%d,%[^,],%f,%s", &cuenta, tipo, &monto, destino);
+        int campos = sscanf(mensaje.mtext, "%d,%[^,],%f,%s", &cuenta, tipo, &monto, destino);
         EstadoCuenta *estado = get_estado(cuenta);
 
-        if (strcmp(tipo, "retiro") == 0 && monto >= LIMITE_RETIRO) {
+        if (strcmp(tipo, "retiro") == 0 && monto >= cfg.limite_retiro) {
             if (strcmp(estado->ultima_operacion, "retiro") == 0)
                 estado->retiros_consecutivos++;
             else
@@ -112,6 +115,10 @@ int main(int argc, char *argv[]) {
                 snprintf(alerta, sizeof(alerta),
                          "ALERTA: Retiros sospechosos consecutivos en cuenta %d\n", cuenta);
                 write(pipe_fd, alerta, strlen(alerta));
+
+                FILE *t = fopen(archivo_transacciones, "a");
+                fprintf(t,"ALERTA: Retiros sospechosos consecutivos en cuenta %d\n", cuenta);
+                fclose(t);
             }
         } else {
             estado->retiros_consecutivos = 0;
@@ -125,6 +132,10 @@ int main(int argc, char *argv[]) {
                 snprintf(alerta, sizeof(alerta),
                          "ALERTA: Transferencias repetidas desde %d a %s\n", cuenta, destino);
                 write(pipe_fd, alerta, strlen(alerta));
+
+                FILE *t = fopen(archivo_transacciones, "a");
+                fprintf(t,"ALERTA: Transferencias repetidas desde %d a %s\n", cuenta, destino);
+                fclose(t);
             }
             strcpy(estado->ultimo_destino, destino);
         }
@@ -135,12 +146,16 @@ int main(int argc, char *argv[]) {
             snprintf(alerta, sizeof(alerta),
                      "ALERTA: Uso simultáneo detectado en cuenta %d\n", cuenta);
             write(pipe_fd, alerta, strlen(alerta));
+
+            FILE *t = fopen(archivo_transacciones, "a");
+                fprintf(t,"ALERTA: Uso simultáneo detectado en cuenta %d\n", cuenta);
+                fclose(t);
         }
 
         strcpy(estado->ultima_operacion, tipo);
         estado->uso_concurrente--;
 
-        printf("[MONITOR] %s\n", mensaje.texto);
+        printf("[MONITOR] %s\n", mensaje.mtext);
     }
 
     return 0;
